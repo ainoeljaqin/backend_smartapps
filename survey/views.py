@@ -31,63 +31,63 @@ class SurveyDetailView(APIView):
 
         except Survey.DoesNotExist:
             return Response({"detail": "Survey not found."}, status=status.HTTP_404_NOT_FOUND)
+        
+class SurveyPredictView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request, user_id=None):
+        try:
+            if user_id:
+                survey = Survey.objects.get(user_id=user_id)
+            else:
+                survey = Survey.objects.get(user=request.user)
+
+            data_for_prediction = pd.DataFrame([{
+                    "Pendapatan": survey.income,
+                    "Pengeluaran Makanan": survey.foodExpense,
+                    "Pengeluaran Pendidikan": survey.educationExpense,
+                    "Pengeluaran Kesehatan": survey.healthExpense,
+                    "Pajak": survey.transportationTaxExpense,
+                    "Transport": survey.transportationTaxExpense,
+                    "Pajak PBB": survey.pbbTaxExpense,
+                    "Biaya Listrik": survey.electricityExpense,
+                }])
+
+            # normalization
+            if scaler is None:
+                return Response(
+                    {"error": "Scaler is not available."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            data_scaled = scaler.transform(data_for_prediction)
+
+            # label prediction
+            if knn_model is None:
+                return Response(
+                    {"error": "Classification model is not available."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            label_pred = knn_model.predict(data_scaled)[0]
+
+            # Simpan hasil prediksi ke database
+            survey.economicLevel = label_pred
+            survey.save()
+
+            # Kembalikan data survei dengan label prediksi
+            serializer = SurveySerializer(survey)
+            return Response({"prediction_label": label_pred, "survey": serializer.data}, status=status.HTTP_200_OK)
+
+        except Survey.DoesNotExist:
+            return Response({"detail": "Survey not found."}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
 
 class SurveyCreateView(APIView):
     def post(self, request):
         serializer = SurveySerializer(data=request.data)
         if serializer.is_valid():
-            try:
-                # Extract data for prediction
-                data_for_prediction = pd.DataFrame([{
-                    "Pendapatan": request.data["income"],
-                    "Pengeluaran Makanan": request.data["foodExpense"],
-                    "Pengeluaran Pendidikan": request.data["educationExpense"],
-                    "Pengeluaran Kesehatan": request.data["healthExpense"],
-                    "Pajak": request.data["transportationTaxExpense"],
-                    "Transport": request.data["transportationTaxExpense"],
-                    "Pajak PBB": request.data["pbbTaxExpense"],
-                    "Biaya Listrik": request.data["electricityExpense"],
-                }])
-
-                # normalization
-                if scaler is None:
-                    return Response(
-                        {"error": "Scaler is not available."},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
-
-                data_scaled = scaler.transform(data_for_prediction)
-
-                # label prediction
-                if knn_model is None:
-                    return Response(
-                        {"error": "Classification model is not available."},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
-
-                label_pred = knn_model.predict(data_scaled)[0]
-
-            except KeyError as e:
-                return Response(
-                    {"error": f"Missing field in input data: {str(e)}"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            except ValueError as e:
-                return Response(
-                    {"error": f"Data format error: {str(e)}"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            except Exception as e:
-                return Response(
-                    {"error": f"An unexpected error occurred during prediction: {str(e)}"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-
-            survey = serializer.save()
-            survey.economicLevel = label_pred
-            survey.save()
-
+            serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
